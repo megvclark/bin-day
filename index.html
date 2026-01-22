@@ -8,7 +8,7 @@
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin: 0; padding: 24px; }
-    .wrap { max-width: 640px; margin: 0 auto; }
+    .wrap { max-width: 680px; margin: 0 auto; }
     .card { border: 1px solid rgba(127,127,127,.25); border-radius: 18px; padding: 18px; }
     h1 { margin: 0 0 10px; font-size: 22px; }
     .muted { opacity: .7; font-size: 14px; }
@@ -16,11 +16,12 @@
     .icons { display:flex; gap:10px; align-items:center; }
     .icon { width: 44px; height: 44px; }
     .big { font-size: 24px; font-weight: 850; line-height: 1.1; margin: 0; }
-    .sub { margin-top: 6px; font-size: 15px; opacity: .8; }
+    .sub { margin-top: 6px; font-size: 15px; opacity: .85; }
     .small { margin-top: 4px; font-size: 13px; opacity: .75; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
     button { border-radius: 12px; padding: 10px 12px; border: 1px solid rgba(127,127,127,.35); background: transparent; font: inherit; cursor: pointer; }
     button:active { transform: translateY(1px); }
+    .footer { margin-top: 14px; }
   </style>
 </head>
 
@@ -36,47 +37,58 @@
         <p class="big" id="headline"></p>
         <div class="sub" id="dateLine"></div>
         <div class="small" id="detailLine"></div>
+        <div class="small" id="noteLine"></div>
       </div>
     </div>
 
     <div class="row">
       <button id="addNext">Add next reminder</button>
       <button id="addYear">Download full year for Google Calendar</button>
+      <button id="copy">Copy next bin info</button>
+    </div>
+
+    <div class="footer muted">
+      Tip: iPhone → open in Safari → Share → <b>Add to Home Screen</b>.
     </div>
   </div>
 </div>
 
 <script>
-/* ================= CONFIG ================= */
+/* =========================
+   CONFIG (locked to your facts)
+   ========================= */
 
-// Recycling alternates weekly
-const RECYCLING = ["Mixed Recycling", "Paper & Card"];
-
-// Anchor recycling colour (Thu 5 Feb 2026 = Paper)
-const recyclingAnchorDate = new Date(2026, 1, 5, 12, 0, 0);
-const recyclingAnchorIndex = 1; // Paper & Card
-
-// Black bin fortnight (alone)
-const blackBinAnchorDate = new Date(2026, 1, 12, 12, 0, 0); // known black-bin-only Thursday
-
-// Garden season
-const gardenSeasonStart = new Date(2026, 2, 27, 12, 0, 0); // 27 March 2026
-
-// December exceptions
-const overrides = {
-  "2026-12-23": ["General Waste"],
-  "2026-12-31": ["Paper & Card"]
+// Recycling alternates weekly on NON-black weeks
+const RECYCLING = {
+  BLUE: "Mixed Recycling",
+  PURPLE: "Paper & Card"
 };
 
+// You confirmed Thu 29 Jan 2026 is PURPLE.
+const recyclingAnchorDate = new Date(2026, 0, 29, 12, 0, 0);
+const recyclingAnchor = RECYCLING.PURPLE;
+
+// Black bin is fortnightly and always alone.
+// You confirmed Thu 22 Jan 2026 and Thu 5 Feb 2026 are BLACK.
+const blackBinAnchorDate = new Date(2026, 0, 22, 12, 0, 0);
+
+// Garden season begins from 27 March 2026 onward (and only appears on recycling weeks)
+const gardenSeasonStart = new Date(2026, 2, 27, 12, 0, 0);
+
+// December changes you shared
+const overrides = {
+  "2026-12-23": ["General Waste"],   // moved collection (black)
+  "2026-12-31": ["Paper & Card"]     // purple only
+};
 const noCollection = new Set(["2026-12-24"]);
 
+// Labels + colours
 const colours = {
   "Garden Waste": "#2e7d32",
   "General Waste": "#111111",
   "Paper & Card": "#7b1fa2",
   "Mixed Recycling": "#1565c0"
 };
-
 const plain = {
   "Garden Waste": "Green bin",
   "General Waste": "Black bin",
@@ -84,88 +96,217 @@ const plain = {
   "Mixed Recycling": "Blue bin"
 };
 
-/* ================= HELPERS ================= */
+/* =========================
+   HELPERS
+   ========================= */
 
-const pad = n => String(n).padStart(2,"0");
-const key = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const pad2 = n => String(n).padStart(2,"0");
+const key = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+const atNoon = d => { const x = new Date(d); x.setHours(12,0,0,0); return x; };
 const isThu = d => d.getDay() === 4;
-const weeksBetween = (a,b) => Math.floor((b - a) / (1000*60*60*24*7));
+const msWeek = 1000*60*60*24*7;
+const weeksBetween = (a,b) => Math.floor((atNoon(b) - atNoon(a)) / msWeek);
 
-function recyclingFor(date){
-  const w = weeksBetween(recyclingAnchorDate, date);
-  return RECYCLING[(recyclingAnchorIndex + w) % 2];
+function formatFull(d){
+  return d.toLocaleDateString(undefined,{weekday:"long",year:"numeric",month:"long",day:"numeric"});
 }
+
+/* =========================
+   SCHEDULE LOGIC
+   ========================= */
 
 function isBlackBinWeek(date){
+  // only relevant for Thursdays (or it’s overridden elsewhere)
   const w = weeksBetween(blackBinAnchorDate, date);
-  return w % 2 === 0;
+  return (w % 2) === 0;
 }
 
-/* ================= CORE LOGIC ================= */
+function recyclingFor(date){
+  // alternates weekly from the purple anchor
+  const w = weeksBetween(recyclingAnchorDate, date);
+  if ((w % 2) === 0) return recyclingAnchor;
+  return (recyclingAnchor === RECYCLING.PURPLE) ? RECYCLING.BLUE : RECYCLING.PURPLE;
+}
 
 function binsForDate(date){
   const k = key(date);
+
   if (noCollection.has(k)) return null;
   if (overrides[k]) return overrides[k];
   if (!isThu(date)) return null;
 
-  // Black bin weeks are always alone
-  if (isBlackBinWeek(date)) {
-    return ["General Waste"];
-  }
+  // Black bin weeks: always alone
+  if (isBlackBinWeek(date)) return ["General Waste"];
 
-  // Otherwise recycling week
+  // Otherwise: recycling
   const bins = [recyclingFor(date)];
 
-  // Add garden if in season
-  if (date >= gardenSeasonStart) {
-    bins.push("Garden Waste");
-  }
+  // Add garden only in season, and only on recycling weeks (never with black)
+  if (date >= gardenSeasonStart) bins.push("Garden Waste");
 
   return bins;
 }
 
 function nextCollection(from){
-  const d = new Date(from);
-  d.setHours(12,0,0,0);
+  const start = atNoon(from);
   for (let i=1;i<=21;i++){
-    const x = new Date(d);
-    x.setDate(x.getDate()+i);
-    const bins = binsForDate(x);
-    if (bins) return { date:x, bins };
+    const d = new Date(start);
+    d.setDate(d.getDate()+i);
+    d.setHours(12,0,0,0);
+    const bins = binsForDate(d);
+    if (bins && bins.length) return { date:d, bins };
   }
   return null;
 }
 
-/* ================= UI ================= */
-
+/* =========================
+   ICON
+   ========================= */
 function binSVG(col){
-  return `<svg viewBox="0 0 64 64" width="44" height="44">
-    <rect x="16" y="18" width="32" height="38" rx="6" fill="${col}"/>
-    <rect x="14" y="14" width="36" height="8" rx="4" fill="${col}"/>
-  </svg>`;
+  return `
+    <svg viewBox="0 0 64 64" width="44" height="44" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bin">
+      <rect x="16" y="18" width="32" height="38" rx="6" fill="${col}" opacity="0.95"/>
+      <rect x="14" y="14" width="36" height="8" rx="4" fill="${col}" opacity="0.9"/>
+      <rect x="24" y="10" width="16" height="6" rx="3" fill="rgba(255,255,255,0.25)"/>
+    </svg>`;
 }
+
+/* =========================
+   CALENDAR (.ics) EXPORT
+   ========================= */
+
+function utcStampNow() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}${pad2(now.getUTCMonth()+1)}${pad2(now.getUTCDate())}T${pad2(now.getUTCHours())}${pad2(now.getUTCMinutes())}${pad2(now.getUTCSeconds())}Z`;
+}
+
+function makeEventICS({ title, date, minutesBefore = 720, uidSuffix = "" }) {
+  const y = date.getFullYear(), m = pad2(date.getMonth()+1), d = pad2(date.getDate());
+  const dtStart = `${y}${m}${d}`; // all-day event
+  const dtEndDate = new Date(date); dtEndDate.setDate(dtEndDate.getDate()+1);
+  const y2 = dtEndDate.getFullYear(), m2 = pad2(dtEndDate.getMonth()+1), d2 = pad2(dtEndDate.getDate());
+  const dtEnd = `${y2}${m2}${d2}`;
+
+  return [
+    "BEGIN:VEVENT",
+    `UID:binday-${dtStart}${uidSuffix}@local`,
+    `DTSTAMP:${utcStampNow()}`,
+    `SUMMARY:${title.replace(/\n/g," ")}`,
+    `DTSTART;VALUE=DATE:${dtStart}`,
+    `DTEND;VALUE=DATE:${dtEnd}`,
+    "BEGIN:VALARM",
+    `TRIGGER:-PT${minutesBefore}M`,
+    "ACTION:DISPLAY",
+    "DESCRIPTION:Bin reminder",
+    "END:VALARM",
+    "END:VEVENT"
+  ].join("\r\n");
+}
+
+function makeCalendarICS(events) {
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//BinDay//EN",
+    "CALSCALE:GREGORIAN",
+    ...events,
+    "END:VCALENDAR"
+  ].join("\r\n");
+}
+
+function downloadTextFile(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildYearEvents(year) {
+  const events = [];
+  const start = new Date(year, 0, 1, 12, 0, 0);
+  const end = new Date(year, 11, 31, 12, 0, 0);
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
+    const date = atNoon(d);
+    const bins = binsForDate(date);
+    if (!bins) continue;
+
+    const title = `${bins.map(b => plain[b] || b).join(" + ")} out`;
+    events.push(makeEventICS({
+      title, date,
+      minutesBefore: 720,
+      uidSuffix: `-${Math.random().toString(16).slice(2,8)}`
+    }));
+  }
+  return events;
+}
+
+/* =========================
+   RENDER
+   ========================= */
 
 const today = new Date();
-document.getElementById("today").textContent =
-  today.toLocaleDateString(undefined,{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+document.getElementById("today").textContent = `Today: ${formatFull(today)}`;
 
 const next = nextCollection(today);
-if (next){
-  document.getElementById("pill").style.display="flex";
-  const icons = document.getElementById("icons");
+
+const pill = document.getElementById("pill");
+const icons = document.getElementById("icons");
+const headline = document.getElementById("headline");
+const dateLine = document.getElementById("dateLine");
+const detailLine = document.getElementById("detailLine");
+const noteLine = document.getElementById("noteLine");
+
+if (next) {
+  pill.style.display = "flex";
   icons.innerHTML = "";
-  next.bins.forEach(b => icons.innerHTML += `<div class="icon">${binSVG(colours[b])}</div>`);
+  next.bins.forEach(b => {
+    icons.innerHTML += `<div class="icon">${binSVG(colours[b] || "#666")}</div>`;
+  });
 
-  document.getElementById("headline").textContent =
-    next.bins.map(b=>plain[b]).join(" + ") + " out";
-
-  document.getElementById("dateLine").textContent =
-    "Next collection: " + next.date.toDateString();
-
-  document.getElementById("detailLine").textContent =
-    "Official: " + next.bins.join(" + ");
+  headline.textContent = `${next.bins.map(b => plain[b] || b).join(" + ")} out`;
+  dateLine.textContent = `Next collection: ${formatFull(next.date)}`;
+  detailLine.textContent = `Official: ${next.bins.join(" + ")}`;
+  noteLine.textContent = (next.date.getDay() === 4) ? "Standard Thursday collection." : "Special schedule (not Thursday).";
+} else {
+  noteLine.textContent = "Couldn’t find the next collection date.";
 }
+
+/* =========================
+   ACTIONS
+   ========================= */
+
+document.getElementById("copy").addEventListener("click", async () => {
+  if (!next) return;
+  const text = `Next collection: ${formatFull(next.date)} — ${next.bins.map(b => plain[b] || b).join(" + ")}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("Copied ✅");
+  } catch {
+    prompt("Copy this:", text);
+  }
+});
+
+document.getElementById("addNext").addEventListener("click", () => {
+  if (!next) return;
+  const title = `${next.bins.map(b => plain[b] || b).join(" + ")} out`;
+  const ics = makeCalendarICS([
+    makeEventICS({ title, date: next.date, minutesBefore: 720, uidSuffix: `-${Math.random().toString(16).slice(2,8)}` })
+  ]);
+  downloadTextFile(`bin-reminder-${key(next.date)}.ics`, ics, "text/calendar;charset=utf-8");
+});
+
+document.getElementById("addYear").addEventListener("click", () => {
+  const year = 2026;
+  const events = buildYearEvents(year);
+  const ics = makeCalendarICS(events);
+  downloadTextFile(`bin-day-${year}-full-year.ics`, ics, "text/calendar;charset=utf-8");
+});
 </script>
 </body>
 </html>
