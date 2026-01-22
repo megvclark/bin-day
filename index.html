@@ -8,228 +8,164 @@
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin: 0; padding: 24px; }
-    .wrap { max-width: 560px; margin: 0 auto; }
+    .wrap { max-width: 640px; margin: 0 auto; }
     .card { border: 1px solid rgba(127,127,127,.25); border-radius: 18px; padding: 18px; }
     h1 { margin: 0 0 10px; font-size: 22px; }
     .muted { opacity: .7; font-size: 14px; }
-    .big { font-size: 22px; margin: 12px 0 6px; font-weight: 700; }
-    .pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; border: 1px solid rgba(127,127,127,.25); }
-    .binDot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+    .pill { display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 16px; border: 1px solid rgba(127,127,127,.25); margin-top: 12px; }
+    .icons { display:flex; gap:10px; align-items:center; }
+    .icon { width: 44px; height: 44px; }
+    .big { font-size: 24px; font-weight: 850; line-height: 1.1; margin: 0; }
+    .sub { margin-top: 6px; font-size: 15px; opacity: .8; }
+    .small { margin-top: 4px; font-size: 13px; opacity: .75; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
     button { border-radius: 12px; padding: 10px 12px; border: 1px solid rgba(127,127,127,.35); background: transparent; font: inherit; cursor: pointer; }
     button:active { transform: translateY(1px); }
-    .footer { margin-top: 14px; }
   </style>
 </head>
 
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Bin Day</h1>
-      <div class="muted" id="today"></div>
+<div class="wrap">
+  <div class="card">
+    <h1>Bin Day</h1>
+    <div class="muted" id="today"></div>
 
-      <div class="big" id="nextLine">Loading…</div>
-      <div class="muted" id="note" style="margin-top:4px;"></div>
-
-      <div class="pill" id="binPill" style="display:none; margin-top:12px;">
-        <span class="binDot" id="binDot"></span>
-        <span id="binName"></span>
-      </div>
-
-      <div class="row">
-        <button id="addCal">Add reminder to calendar</button>
-        <button id="copy">Copy next bin info</button>
-      </div>
-
-      <div class="footer muted">
-        Tip: on iPhone, open in Safari → Share → <b>Add to Home Screen</b>.
+    <div class="pill" id="pill" style="display:none;">
+      <div class="icons" id="icons"></div>
+      <div>
+        <p class="big" id="headline"></p>
+        <div class="sub" id="dateLine"></div>
+        <div class="small" id="detailLine"></div>
       </div>
     </div>
+
+    <div class="row">
+      <button id="addNext">Add next reminder</button>
+      <button id="addYear">Download full year for Google Calendar</button>
+    </div>
   </div>
+</div>
 
 <script>
-  // ====== CONFIG ======
+/* ================= CONFIG ================= */
 
-  // Rotation for your block (Garden included because you pay)
-  const rotation = ["Garden Waste", "Paper & Card", "Mixed Recycling", "General Waste"];
+// Recycling alternates weekly
+const RECYCLING = ["Mixed Recycling", "Paper & Card"];
 
-  // Anchor from your card: Thu 5 Feb 2026 = Paper & Card
-  const anchorDate = new Date(2026, 1, 5, 12, 0, 0); // Feb = 1 (JS months are 0-indexed)
-  const anchorIndex = 1;
+// Anchor recycling colour (Thu 5 Feb 2026 = Paper)
+const recyclingAnchorDate = new Date(2026, 1, 5, 12, 0, 0);
+const recyclingAnchorIndex = 1; // Paper & Card
 
-  // Colours
-  const binColours = {
-    "Garden Waste": "#2e7d32",
-    "Paper & Card": "#7b1fa2",
-    "Mixed Recycling": "#1565c0",
-    "General Waste": "#111111"
-  };
+// Black bin fortnight (alone)
+const blackBinAnchorDate = new Date(2026, 1, 12, 12, 0, 0); // known black-bin-only Thursday
 
-  // December changes from your photo
-  const overrides = {
-    "2026-12-23": "General Waste", // moved from Thu 24
-    "2026-12-31": "Paper & Card"   // moved
-  };
+// Garden season
+const gardenSeasonStart = new Date(2026, 2, 27, 12, 0, 0); // 27 March 2026
 
-  // Explicit no-collection dates
-  const noCollection = new Set([
-    "2026-12-24"
-  ]);
+// December exceptions
+const overrides = {
+  "2026-12-23": ["General Waste"],
+  "2026-12-31": ["Paper & Card"]
+};
 
-  // ====== HELPERS ======
+const noCollection = new Set(["2026-12-24"]);
 
-  function pad2(n){ return String(n).padStart(2,"0"); }
+const colours = {
+  "Garden Waste": "#2e7d32",
+  "General Waste": "#111111",
+  "Paper & Card": "#7b1fa2",
+  "Mixed Recycling": "#1565c0"
+};
 
-  function toKey(date) {
-    // Local date string to avoid timezone drift
-    return `${date.getFullYear()}-${pad2(date.getMonth()+1)}-${pad2(date.getDate())}`;
+const plain = {
+  "Garden Waste": "Green bin",
+  "General Waste": "Black bin",
+  "Paper & Card": "Purple bin",
+  "Mixed Recycling": "Blue bin"
+};
+
+/* ================= HELPERS ================= */
+
+const pad = n => String(n).padStart(2,"0");
+const key = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const isThu = d => d.getDay() === 4;
+const weeksBetween = (a,b) => Math.floor((b - a) / (1000*60*60*24*7));
+
+function recyclingFor(date){
+  const w = weeksBetween(recyclingAnchorDate, date);
+  return RECYCLING[(recyclingAnchorIndex + w) % 2];
+}
+
+function isBlackBinWeek(date){
+  const w = weeksBetween(blackBinAnchorDate, date);
+  return w % 2 === 0;
+}
+
+/* ================= CORE LOGIC ================= */
+
+function binsForDate(date){
+  const k = key(date);
+  if (noCollection.has(k)) return null;
+  if (overrides[k]) return overrides[k];
+  if (!isThu(date)) return null;
+
+  // Black bin weeks are always alone
+  if (isBlackBinWeek(date)) {
+    return ["General Waste"];
   }
 
-  function formatFull(d) {
-    return d.toLocaleDateString(undefined, { weekday:"long", year:"numeric", month:"long", day:"numeric" });
+  // Otherwise recycling week
+  const bins = [recyclingFor(date)];
+
+  // Add garden if in season
+  if (date >= gardenSeasonStart) {
+    bins.push("Garden Waste");
   }
 
-  function atNoon(d) {
+  return bins;
+}
+
+function nextCollection(from){
+  const d = new Date(from);
+  d.setHours(12,0,0,0);
+  for (let i=1;i<=21;i++){
     const x = new Date(d);
-    x.setHours(12,0,0,0);
-    return x;
+    x.setDate(x.getDate()+i);
+    const bins = binsForDate(x);
+    if (bins) return { date:x, bins };
   }
+  return null;
+}
 
-  // Thursday = 4
-  function isRegularCollectionDay(date) {
-    return date.getDay() === 4;
-  }
+/* ================= UI ================= */
 
-  function isOverrideCollectionDay(date) {
-    return Object.prototype.hasOwnProperty.call(overrides, toKey(date));
-  }
+function binSVG(col){
+  return `<svg viewBox="0 0 64 64" width="44" height="44">
+    <rect x="16" y="18" width="32" height="38" rx="6" fill="${col}"/>
+    <rect x="14" y="14" width="36" height="8" rx="4" fill="${col}"/>
+  </svg>`;
+}
 
-  function isCollectionDay(date) {
-    // Only Thursdays, unless it’s an explicit override date (e.g., Wed 23 Dec)
-    return isRegularCollectionDay(date) || isOverrideCollectionDay(date);
-  }
+const today = new Date();
+document.getElementById("today").textContent =
+  today.toLocaleDateString(undefined,{weekday:"long",year:"numeric",month:"long",day:"numeric"});
 
-  function binForDate(collectionDate) {
-    const key = toKey(collectionDate);
+const next = nextCollection(today);
+if (next){
+  document.getElementById("pill").style.display="flex";
+  const icons = document.getElementById("icons");
+  icons.innerHTML = "";
+  next.bins.forEach(b => icons.innerHTML += `<div class="icon">${binSVG(colours[b])}</div>`);
 
-    // no collection dates win (even if Thursday)
-    if (noCollection.has(key)) return null;
+  document.getElementById("headline").textContent =
+    next.bins.map(b=>plain[b]).join(" + ") + " out";
 
-    // overrides win
-    if (overrides[key]) return overrides[key];
+  document.getElementById("dateLine").textContent =
+    "Next collection: " + next.date.toDateString();
 
-    // regular Thursday rotation only
-    const msPerWeek = 1000 * 60 * 60 * 24 * 7;
-    const weeks = Math.floor((collectionDate - anchorDate) / msPerWeek);
-    const idx = (anchorIndex + weeks) % rotation.length;
-    return rotation[(idx + rotation.length) % rotation.length];
-  }
-
-  // Find the next actual collection date.
-  // We scan forward, but ONLY consider Thursdays or explicit override dates.
-  function nextCollection(from) {
-    const start = atNoon(from);
-
-    for (let i = 1; i <= 21; i++) { // 3 weeks just in case
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
-      d.setHours(12,0,0,0);
-
-      if (!isCollectionDay(d)) continue;
-
-      const bin = binForDate(d);
-      if (bin) return { date: d, bin };
-      // if it's a no-collection Thursday, keep scanning (this is how we reach Wed 23 Dec)
-    }
-    return null;
-  }
-
-  // Minimal .ics generator (iOS/Apple Calendar friendly)
-  function makeICS({ title, date, minutesBefore = 720 }) {
-    const y = date.getFullYear(), m = pad2(date.getMonth()+1), d = pad2(date.getDate());
-    const dtStart = `${y}${m}${d}`; // all-day event
-
-    const dtEndDate = new Date(date); dtEndDate.setDate(dtEndDate.getDate()+1);
-    const y2 = dtEndDate.getFullYear(), m2 = pad2(dtEndDate.getMonth()+1), d2 = pad2(dtEndDate.getDate());
-    const dtEnd = `${y2}${m2}${d2}`;
-
-    const now = new Date();
-    const stamp = `${now.getUTCFullYear()}${pad2(now.getUTCMonth()+1)}${pad2(now.getUTCDate())}T${pad2(now.getUTCHours())}${pad2(now.getUTCMinutes())}${pad2(now.getUTCSeconds())}Z`;
-
-    return [
-      "BEGIN:VCALENDAR",
-      "VERSION:2.0",
-      "PRODID:-//BinDay//EN",
-      "CALSCALE:GREGORIAN",
-      "BEGIN:VEVENT",
-      `UID:binday-${dtStart}-${Math.random().toString(16).slice(2)}@local`,
-      `DTSTAMP:${stamp}`,
-      `SUMMARY:${title.replace(/\n/g," ")}`,
-      `DTSTART;VALUE=DATE:${dtStart}`,
-      `DTEND;VALUE=DATE:${dtEnd}`,
-      "BEGIN:VALARM",
-      `TRIGGER:-PT${minutesBefore}M`,
-      "ACTION:DISPLAY",
-      "DESCRIPTION:Bin reminder",
-      "END:VALARM",
-      "END:VEVENT",
-      "END:VCALENDAR"
-    ].join("\r\n");
-  }
-
-  // ====== RENDER ======
-
-  const today = new Date();
-  document.getElementById("today").textContent = `Today: ${formatFull(today)}`;
-
-  const next = nextCollection(today);
-
-  const nextLine = document.getElementById("nextLine");
-  const note = document.getElementById("note");
-  const pill = document.getElementById("binPill");
-  const binName = document.getElementById("binName");
-  const binDot = document.getElementById("binDot");
-
-  if (!next) {
-    nextLine.textContent = "Couldn’t find the next collection date.";
-    note.textContent = "If your council shifts more dates, we can add them as overrides.";
-  } else {
-    nextLine.textContent = `Next collection: ${formatFull(next.date)}`;
-    pill.style.display = "inline-flex";
-    binName.textContent = next.bin;
-    binDot.style.background = binColours[next.bin] || "gray";
-
-    const isThu = next.date.getDay() === 4;
-    note.textContent = isThu ? "Standard Thursday collection." : "Special schedule (not Thursday).";
-  }
-
-  // ====== ACTIONS ======
-
-  document.getElementById("copy").addEventListener("click", async () => {
-    if (!next) return;
-    const text = `Next collection: ${formatFull(next.date)} — ${next.bin}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      alert("Copied ✅");
-    } catch {
-      prompt("Copy this:", text);
-    }
-  });
-
-  document.getElementById("addCal").addEventListener("click", () => {
-    if (!next) return;
-    const title = `${next.bin} bin out`;
-    const ics = makeICS({ title, date: next.date, minutesBefore: 720 }); // 12 hours before
-    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `bin-reminder-${toKey(next.date)}.ics`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  });
+  document.getElementById("detailLine").textContent =
+    "Official: " + next.bins.join(" + ");
+}
 </script>
 </body>
 </html>
